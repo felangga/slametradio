@@ -4,17 +4,17 @@
 #include "Rotary.h"
 #include <math.h>
 #include <SPI.h>
-//#include <Adafruit_GFX.h>    // Core graphics library
-//#include <Adafruit_ST7735.h>
+
 #include <TFT_eSPI.h>                 // Include the graphics library (this includes the sprite functions)
 
+#define FF18 &FreeSans12pt7b
 
 
 // Test it with patch_init.h or patch_full.h. Do not try load both.
 //#include "patch_init.h" // SSB patch for whole SSBRX initialization string
-// #include "patch_full.h"    // SSB patch for whole SSBRX full download
+#include "patch_full.h"    // SSB patch for whole SSBRX full download
 
-//const uint16_t size_content = sizeof ssb_patch_content; // see ssb_patch_content in patch_full.h or patch_init.h
+const uint16_t size_content = sizeof ssb_patch_content; // see ssb_patch_content in patch_full.h or patch_init.h
 
 TFT_eSPI    tft = TFT_eSPI();
 
@@ -30,8 +30,8 @@ TFT_eSPI    tft = TFT_eSPI();
 #define RESET_PIN 12
 
 // Enconder PINs
-#define ENCODER_PIN_A 4
-#define ENCODER_PIN_B 2
+#define ENCODER_PIN_A 2
+#define ENCODER_PIN_B 4
 
 // Buttons controllers
 #define MODE_SWITCH 4      // Switch MODE (Am/LSB/USB)
@@ -130,6 +130,7 @@ const int lastBand = (sizeof band / sizeof(Band)) - 1;
 int bandIdx = 0;
 
 uint8_t rssi = 0;
+uint8_t snr = 0;
 uint8_t stereo = 1;
 uint8_t volume = DEFAULT_VOLUME;
 
@@ -144,6 +145,7 @@ String currentSatuan = "MHz";
 double geser = 0.0;
 double geserSebelum = geser;
 int frekuensi[13];
+boolean fast = false;
 
 // Devices class declarations
 Rotary encoder = Rotary(ENCODER_PIN_A, ENCODER_PIN_B);
@@ -173,23 +175,36 @@ void IRAM_ATTR rotaryEncoder()
 
 void setup()
 {
-  Serial.begin(9600);
-  // Look for the Si47XX I2C bus address
-  int16_t si4735Addr = si4735.getDeviceI2CAddress(RESET_PIN);
-  if ( si4735Addr == 0 ) {
-    Serial.println("Si473X not found!");
-    Serial.flush();
-    while (1);
-  } else {
-    Serial.print("The Si473X I2C address is 0x");
-    Serial.println(si4735Addr, HEX);
-  }
-
-  si4735.setup(RESET_PIN, FM_BAND_TYPE);
-
   tft.init();
   tft.setRotation(1);
   tft.fillScreen(0x0000);
+
+
+  tft.setTextColor(0xFFFF, 0x0000);
+  tft.setTextWrap(false);
+
+  Serial.begin(9600);
+  // Look for the Si47XX I2C bus address
+
+  int16_t si4735Addr = 0 ;
+  while (si4735Addr == 0) {
+    si4735Addr = si4735.getDeviceI2CAddress(RESET_PIN);
+    if ( si4735Addr == 0 ) {
+      tft.println("Radio chip not found!");
+      Serial.println("Si473X not found!");
+
+    } else {
+      Serial.print("The Si473X I2C address is 0x");
+      Serial.println(si4735Addr, HEX);
+    }
+    delay(500);
+  }
+
+  tft.fillScreen(0x0000);
+
+  si4735.setup(RESET_PIN, FM_BAND_TYPE);
+
+
 
   //  // Encoder pins
   pinMode(ENCODER_PIN_A, INPUT_PULLUP);
@@ -208,30 +223,20 @@ void setup()
   si4735.setFM(currentBottomFreq, currentTopFreq, 9420, 10);
   bfoOn = ssbLoaded = false;
   delay(200);
-  //currentFrequency = previousFrequency = si4735.getFrequency();
-  //  currentFrequency = currentBottomFreq;
 
   currentFrequency = si4735.getFrequency();
+  geser = ((currentFrequency - currentBottomFreq) / currentPembagi) * 30.0;
+
   si4735.setFrequency(currentFrequency);
   si4735.setVolume(volume);
 
-  //  showStatus();
-
-
   drawFreq();
+
   drawDial(currentBottomFreq, currentTopFreq, currentPembagi);
 }
 
 
-
-
-//void clearLine4() {
-//  display.setCursor(0, 2);
-//  display.print("                    ");
-//}
-
 // Show current frequency
-
 //void showFrequency()
 //{
 //  String freqDisplay;
@@ -324,28 +329,29 @@ void setup()
 /* *******************************
    Shows RSSI status
 */
-//void showRSSI()
-//{
-//  char c = '>';
-//  int bars = ((rssi / 10.0) / 2.0) + 1;
-//
-//  //  display.setCursor(13, 3);
-//  //  display.print("       ");
-//  //  display.setCursor(13, 3);
-//  //  display.print("S:");
-//  if ( bars > 5 )  {
-//    bars = 5;
-//    c = '+';
-//  }
-//  for (int i = 0; i < bars; i++)
-//    //    display.print(">");
-//
-//    if ( currentMode == FM) {
-//      //    display.setCursor(0, 3);
-//      //    display.print((si4735.getCurrentPilot()) ? "STEREO   " : "MONO     ");
-//    }
-//
-//}
+void showRSSI()
+{
+  Serial.print("sNR "); Serial.println(snr);
+  // draw signal bar
+  tft.fillRect(((rssi * 4)), 0, 160, 15, 0x0000);
+  tft.fillRect(0, 0, rssi * 4 , 15, 0x0E00);
+
+  tft.fillRect(((snr * 4)), 15, 160, 15, 0x0000);
+  tft.fillRect(0, 15, snr * 4 , 15, 0xAA00);
+
+  tft.setCursor(2, 4);
+  tft.setTextColor(0xFFFF);
+  tft.setTextWrap(false);
+  tft.setTextSize(1);
+
+  tft.print("SGNL");
+
+  tft.setCursor(2, 19);
+  tft.print("SNR");
+
+
+
+}
 
 /*
    Shows the volume level on LCD
@@ -524,12 +530,20 @@ int drawString(char *string, int poX, int poY)
 }
 
 void drawFreq() {
-  char freq[7];
-  String convert = " " + String(currentFrequency);
-  convert.toCharArray(freq, 7);
 
-  tft.setTextSize(0.5);
-  tft.drawRightString(freq, 160, 1, 7);
+
+  if (previousFrequency != currentFrequency) {
+    char freq[8];
+    String convert = " " + String(currentFrequency / currentPembagi, 2);
+    convert.toCharArray(freq, 8);
+
+    tft.setTextSize(3);
+    tft.setTextColor(0xFFFF);
+    tft.drawRightString(freq, 160, 4, 1);
+    previousFrequency = currentFrequency;
+  }
+
+
 }
 
 
@@ -545,12 +559,6 @@ void drawDial(int startFreq, int endFreq, int pembagi) {
   double jumlahGeser = (floor(360.0 / ((endFreq - startFreq) / pembagi))) / 10.0;
   //double jumlahGeser = 3.0;
   tempTitik = 0;
-
-
-  Serial.print("GESER: ");
-  Serial.println(geser);
-
-
 
   char freq[7];
   String convert = String(currentFrequency);
@@ -605,9 +613,7 @@ void drawDial(int startFreq, int endFreq, int pembagi) {
 
       int x2 = r * cos(((i - geserSebelum) - 90) * PI / 180);
       int y2 = r * sin(((i - geserSebelum) - 90) * PI / 180);
-      //
-      //      int x1 = r * cos(((i - geser) - 90) * PI / 180);
-      //      int y1 = r * sin(((i - geser) - 90) * PI / 180);
+
 
       tft.fillCircle(x + x1, y + y1, 1, TFT_CYAN);
 
@@ -615,9 +621,7 @@ void drawDial(int startFreq, int endFreq, int pembagi) {
       if (x + x1 > 160) continue;
       if (y + y1 > 128) continue;
       if (frekuensi[(i / 30)] <= endFreq && frekuensi[(i / 30)] >= startFreq) {
-        // tft.fillRect(x + x1 - 10, y + y1 - 10, x + x1 + +(strlen(freq) * 5) + 10, y + y1 + 18, 0x0000);
-        //      drawString(freq, x + x1, y + y1 + 5);
-        //      tft.fillScreen(0x0000);
+
         tft.setTextSize(1);
         tft.setTextColor(0x0000, 0x0000);
         tft.drawCentreString(freq, x + x2, y + y2 + 5, 1);
@@ -628,18 +632,27 @@ void drawDial(int startFreq, int endFreq, int pembagi) {
       }
     }
   }
-
-
 }
 
 
 void loop()
 {
 
+  if (millis() - waktuTerakhir >  700)fast = false;
 
-  drawFreq();
+  if (fast) {
 
-  // Check if the encoder has moved.
+    tft.setTextSize(1);
+    tft.setTextColor(0xFFFF, 0x0000);
+    tft.drawRightString("FAST", 157, 33, 1);
+
+  } else {
+
+    tft.setTextSize(1);
+    tft.setTextColor(0xFFFF, 0x0000);
+    tft.drawRightString("SLOW", 157, 33, 1);
+  }
+
   if (encoderCount != 0)
   {
     if (bfoOn)
@@ -650,10 +663,15 @@ void loop()
     {
 
       if (millis() - waktuTerakhir < 100) {
-        step = 50;
-        // jumlahGeser = jumlahGeser * 5;
+        fast = true;
+      } 
+
+      if (fast) {
+        step = 10;
+
       } else {
         step = 1;
+
       }
 
       if (encoderCount == 1) {
@@ -668,12 +686,31 @@ void loop()
 
       geser = ((currentFrequency - currentBottomFreq) / currentPembagi) * 30.0;
       drawDial(currentBottomFreq, currentTopFreq, currentPembagi);
+      showRSSI();
 
     }
 
     waktuTerakhir = millis();
     encoderCount = 0;
   }
+
+
+  if ((millis() - elapsedRSSI) > MIN_ELAPSED_RSSI_TIME * 5)
+  {
+    si4735.getCurrentReceivedSignalQuality();
+    int aux = si4735.getCurrentRSSI();
+    snr = si4735.getCurrentSNR();
+
+    if (rssi != aux)
+    {
+      rssi = aux;
+      previousFrequency = 0;
+      showRSSI();
+    }
+    elapsedRSSI = millis();
+  }
+
+  drawFreq();
 
   delay(10);
 }
