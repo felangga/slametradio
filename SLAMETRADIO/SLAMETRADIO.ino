@@ -4,11 +4,8 @@
 #include "Rotary.h"
 #include <math.h>
 #include <SPI.h>
-
-#include <TFT_eSPI.h>                 // Include the graphics library (this includes the sprite functions)
-
-#define FF18 &FreeSans12pt7b
-
+#include <TFT_eSPI.h>
+#include <Adafruit_GFX.h>
 
 // Test it with patch_init.h or patch_full.h. Do not try load both.
 //#include "patch_init.h" // SSB patch for whole SSBRX initialization string
@@ -48,7 +45,7 @@ TFT_eSPI    tft = TFT_eSPI();
 #define MIN_ELAPSED_TIME 100
 #define MIN_ELAPSED_RSSI_TIME 150
 
-#define DEFAULT_VOLUME 50 // change it for your favorite sound volume
+#define DEFAULT_VOLUME 100 // change it for your favorite sound volume
 
 #define FM 0
 #define LSB 1
@@ -72,6 +69,7 @@ int step = 10;
 int screenWidth = 320;
 int screenHeight = 240;
 int idxBand = 1;
+bool lastPencet = false;
 
 long elapsedRSSI = millis();
 long elapsedButton = millis();
@@ -92,43 +90,53 @@ const char *bandwitdthSSB[] = {"1.2", "2.2", "3.0", "4.0", "0.5", "1.0"};
 uint8_t bwIdxAM = 1;
 const char *bandwitdthAM[] = {"6", "4", "3", "2", "1", "1.8", "2.5"};
 unsigned int buttonstate;
-/*
-   Band data structure
-*/
+
 typedef struct
 {
+  const char *bandName;
   uint8_t bandType;     // Band type (FM, MW or SW)
   uint16_t minimumFreq; // Minimum frequency of the band
   uint16_t maximumFreq; // maximum frequency of the band
   uint16_t currentFreq; // Default frequency or current frequency
   uint16_t currentStep; // Defeult step (increment and decrement)
+  double currentPembagi; // Defeult step (increment and decrement)
+
 } Band;
 
-/*
-   Band table
-*/
 Band band[] = {
-  {FM_BAND_TYPE, 8400, 10800, 10390, 10},
-  {LW_BAND_TYPE, 100, 510, 300, 1},
-  {MW_BAND_TYPE, 520, 1720, 810, 10},
-  {SW_BAND_TYPE, 1800, 3500, 1900, 1}, // 160 meters
-  {SW_BAND_TYPE, 3500, 4500, 3700, 1}, // 80 meters
-  {SW_BAND_TYPE, 4500, 5500, 4850, 5},
-  {SW_BAND_TYPE, 5600, 6300, 6000, 5},
-  {SW_BAND_TYPE, 6800, 7800, 7200, 5}, // 40 meters
-  {SW_BAND_TYPE, 9200, 10000, 9600, 5},
-  {SW_BAND_TYPE, 10000, 11000, 10100, 1}, // 30 meters
-  {SW_BAND_TYPE, 11200, 12500, 11940, 5},
-  {SW_BAND_TYPE, 13400, 13900, 13600, 5},
-  {SW_BAND_TYPE, 14000, 14500, 14200, 1}, // 20 meters
-  {SW_BAND_TYPE, 15000, 15900, 15300, 5},
-  {SW_BAND_TYPE, 17200, 17900, 17600, 5},
-  {SW_BAND_TYPE, 18000, 18300, 18100, 1},  // 17 meters
-  {SW_BAND_TYPE, 21000, 21900, 21200, 1},  // 15 mters
-  {SW_BAND_TYPE, 24890, 26200, 24940, 1},  // 12 meters
-  {SW_BAND_TYPE, 26200, 27900, 27500, 1},  // CB band (11 meters)
-  {SW_BAND_TYPE, 28000, 30000, 28400, 1}
-}; // 10 meters
+  {"FM  ", FM_BAND_TYPE, 8400, 10800, 10390, 10, 100.0},
+  {"LW  ", LW_BAND_TYPE, 100, 510, 300, 1, 1.0},
+  {"AM  ", MW_BAND_TYPE, 520, 1720, 810, 10, 1.0},
+  {"160m", SW_BAND_TYPE, 1800, 3500, 1900, 1, 1000.0}, // 160 meters
+  {"80m ", SW_BAND_TYPE, 3500, 4500, 3700, 1, 1000.0}, // 80 meters
+  {"60m ", SW_BAND_TYPE, 4500, 5500, 4850, 5, 1000.0},
+  {"49m ", SW_BAND_TYPE, 5600, 6300, 6000, 5, 1000.0},
+  {"41m ", SW_BAND_TYPE, 6800, 7800, 7100, 5, 1000.0}, // 40 meters
+  {"31m ", SW_BAND_TYPE, 9200, 10000, 9600, 5, 1000.0},
+  {"30m ", SW_BAND_TYPE, 10000, 11000, 10100, 1, 1000.0}, // 30 meters
+  {"25m ", SW_BAND_TYPE, 11200, 12500, 11940, 5, 1000.0},
+  {"22m ", SW_BAND_TYPE, 13400, 13900, 13600, 5, 1000.0},
+  {"20m ", SW_BAND_TYPE, 14000, 14500, 14200, 1, 1000.0}, // 20 meters
+  {"19m ", SW_BAND_TYPE, 15000, 15900, 15300, 5, 1000.0},
+  {"18m ", SW_BAND_TYPE, 17200, 17900, 17600, 5, 1000.0},
+  {"17m ", SW_BAND_TYPE, 18000, 18300, 18100, 1, 1000.0},  // 17 meters
+  {"15m ", SW_BAND_TYPE, 21000, 21900, 21200, 1, 1000.0},  // 15 mters
+  {"12m ", SW_BAND_TYPE, 24890, 26200, 24940, 1, 1000.0},  // 12 meters
+  {"CB  ", SW_BAND_TYPE, 26200, 27900, 27500, 1, 1000.0},  // CB band (11 meters)
+  {"10m ", SW_BAND_TYPE, 28000, 30000, 28400, 1, 1000.0}
+};
+
+typedef struct
+{
+  uint8_t x;
+  uint16_t y;
+  uint16_t w;
+  uint16_t h;
+  char* title;
+} Tombol;
+
+Tombol btnAGC, btnNextBand, btnPrevBand, btnMode, btnBandwidth;
+
 
 const int lastBand = (sizeof band / sizeof(Band)) - 1;
 int bandIdx = 0;
@@ -167,12 +175,10 @@ void IRAM_ATTR rotaryEncoder()
     if (encoderStatus == DIR_CW)
     {
       encoderCount = 1;
-
     }
     else
     {
       encoderCount = -1;
-
     }
   }
 }
@@ -184,13 +190,17 @@ void setup()
   tft.setRotation(1);
   tft.fillScreen(0x0000);
 
+  // KALIBRASI LAYAR
+  uint16_t calData[5] = { 400, 3407, 348, 3340, 7 };
+  tft.setTouch(calData);
+
 
   tft.setTextColor(0xFFFF, 0x0000);
   tft.setTextWrap(false);
 
   Serial.begin(9600);
-  // Look for the Si47XX I2C bus address
 
+  // Look for the Si47XX I2C bus address
   int16_t si4735Addr = 0 ;
   while (si4735Addr == 0) {
     si4735Addr = si4735.getDeviceI2CAddress(RESET_PIN);
@@ -217,141 +227,80 @@ void setup()
   attachInterrupt(ENCODER_PIN_A, rotaryEncoder, CHANGE);
   attachInterrupt(ENCODER_PIN_B, rotaryEncoder, CHANGE);
 
-  gantiBand(1);
+  useBand();
   delay(200);
 
 
   currentFrequency = si4735.getFrequency();
-  geserSebelum = ((currentTopFreq - currentFrequency) / currentPembagi) * 30;
+  geserSebelum = ((band[bandIdx].maximumFreq - currentFrequency) / band[bandIdx].currentPembagi) * 30;
 
   si4735.setFrequency(currentFrequency);
   si4735.setVolume(volume);
 
   drawFreq();
-  drawDial(currentBottomFreq, currentTopFreq, 100);
+  drawDial(band[bandIdx].minimumFreq, band[bandIdx].maximumFreq, band[bandIdx].currentPembagi);
+
+  // init tombol
+  btnAGC = {30, 50, 60, 30, "AGC"};
+  btnPrevBand = {110, 50, 80, 30, "Prev Band"};
+  btnNextBand = {210, 50, 80, 30, "Next Band"};
+  btnMode = {30, 90, 60, 30, "AM Mode"};
+
+  daftarTombol();
 }
 
-void setAM(int startFreq, int endFreq, int currentFreq, int step) {
-  if (startFreq < 1700)
-    si4735.setTuneFrequencyAntennaCapacitor(0);
-  else
-    si4735.setTuneFrequencyAntennaCapacitor(1);
 
-  if (ssbLoaded)
-  {
-    si4735.setSSB(startFreq, endFreq, currentFreq, step, currentMode);
-    si4735.setSSBAutomaticVolumeControl(1);
-    si4735.setSsbSoftMuteMaxAttenuation(0); // Disable Soft Mute for SSB
-  }
-  else
-  {
-    currentMode = AM;
-    si4735.setAM(startFreq, endFreq, currentFreq, step);
-    si4735.setAutomaticGainControl(1, 0);
-    si4735.setAmSoftMuteMaxAttenuation(0); // // Disable Soft Mute for AM
-    bfoOn = false;
-  }
-}
-
-void gantiBand(int band) {
-  switch (band) {
-    // FM
-    case 1 :
-      currentBottomFreq = 8800;
-      currentTopFreq = 10800;
-      currentPembagi = 100.0;
-      currentFrequency = currentBottomFreq;
-      currentSatuan  = "MHz";
-      currentDecimal = 2;
-      currentMode = FM;
-      si4735.setTuneFrequencyAntennaCapacitor(0);
-      si4735.setFM(currentBottomFreq, currentTopFreq, 9800, 10);
-      bfoOn = ssbLoaded = false;
-      break;
-    // LW
-    case 2 :
-      currentBottomFreq = 100;
-      currentTopFreq = 510;
-      currentPembagi = 1;
-      currentSatuan  = "KHz";
-      currentDecimal = 0;
-      currentFrequency = 300;
-      setAM(currentBottomFreq, currentTopFreq, currentFrequency, 1);
-      break;
-    // MW
-    case 3 :
-      currentBottomFreq = 520;
-      currentTopFreq = 1720;
-      currentPembagi = 1;
-      currentDecimal = 0;
-      currentSatuan  = "KHz";
-      currentFrequency = currentBottomFreq;
-      setAM(currentBottomFreq, currentTopFreq, currentFrequency, 10);
-      break;
-    // SW
-    case 4 :
-      currentBottomFreq = 1800;
-      currentTopFreq = 28000;
-      currentPembagi = 1000.0;
-      currentDecimal = 3;
-      currentSatuan  = "KHz";
-      currentFrequency = currentBottomFreq;
-      setAM(currentBottomFreq, currentTopFreq, currentFrequency, 1);
-      break;
-  }
-
-  geserSebelum = ((currentTopFreq - currentFrequency) / currentPembagi) * 30;
-
-}
-
-// Show current frequency
-//void showFrequency()
-//{
-//  String freqDisplay;
-//  String unit;
-//  String bandMode;
-//  int divider = 1;
-//  int decimals = 3;
-//  if (band[bandIdx].bandType == FM_BAND_TYPE)
-//  {
-//    divider = 100;
-//    decimals = 1;
-//    unit = "MHz";
-//  }
-//  else if (band[bandIdx].bandType == MW_BAND_TYPE || band[bandIdx].bandType == LW_BAND_TYPE)
-//  {
-//    divider = 1;
-//    decimals = 0;
-//    unit = "KHz";
-//  }
-//  else
-//  {
-//    divider = 1000;
-//    decimals = 3;
-//    unit = "KHz";
+//void gantiBand(int band) {
+//  switch (band) {
+//    // FM
+//    case 1 :
+//      currentBottomFreq = 8800;
+//      currentTopFreq = 10800;
+//      currentPembagi = 100.0;
+//      currentFrequency = currentBottomFreq;
+//      currentSatuan  = "MHz";
+//      currentDecimal = 2;
+//      currentMode = FM;
+//      si4735.setTuneFrequencyAntennaCapacitor(0);
+//      si4735.setFM(currentBottomFreq, currentTopFreq, 9800, 10);
+//      bfoOn = ssbLoaded = false;
+//      break;
+//    // LW
+//    case 2 :
+//      currentBottomFreq = 100;
+//      currentTopFreq = 510;
+//      currentPembagi = 1;
+//      currentSatuan  = "KHz";
+//      currentDecimal = 0;
+//      currentFrequency = 300;
+//      setAM(currentBottomFreq, currentTopFreq, currentFrequency, 1);
+//      break;
+//    // MW
+//    case 3 :
+//      currentBottomFreq = 520;
+//      currentTopFreq = 1720;
+//      currentPembagi = 1;
+//      currentDecimal = 0;
+//      currentSatuan  = "KHz";
+//      currentFrequency = currentBottomFreq;
+//      setAM(currentBottomFreq, currentTopFreq, currentFrequency, 10);
+//      break;
+//    // SW
+//    case 4 :
+//      currentBottomFreq = 1800;
+//      currentTopFreq = 28000;
+//      currentPembagi = 1000.0;
+//      currentDecimal = 3;
+//      currentSatuan  = "KHz";
+//      currentFrequency = currentBottomFreq;
+//      setAM(currentBottomFreq, currentTopFreq, currentFrequency, 1);
+//      break;
 //  }
 //
-//  if ( !bfoOn )
-//    freqDisplay = String((float)currentFrequency / divider, decimals);
-//  else
-//    freqDisplay = ">" + String((float)currentFrequency / divider, decimals) + "<";
+//  geserSebelum = ((currentTopFreq - currentFrequency) / currentPembagi) * 30;
 //
-//  //  display.setCursor(7, 0);
-//  //  display.print("        ");
-//  //  display.setCursor(7, 0);
-//  //  display.print(freqDisplay);
-//
-//  if (currentFrequency < 520 )
-//    bandMode = "LW  ";
-//  else
-//    bandMode = bandModeDesc[currentMode];
-//  //
-//  //  display.setCursor(0, 0);
-//  //  display.print(bandMode);
-//  //
-//  //  display.setCursor(17, 0);
-//  //  display.print(unit);
 //}
+
 
 /*
     Show some basic information on display
@@ -402,7 +351,7 @@ void showRSSI()
 
   // draw signal bar
   tft.fillRect(((rssi * 8)), 0, screenWidth, 15, 0x0000);
-  tft.fillRect(0, 0, rssi * 8 , 15, 0x0E00);
+  tft.fillRect(0, 0, rssi * 8 , 15, 0x0A00);
 
   tft.fillRect(((snr * 4)), 15, screenWidth, 15, 0x0000);
   tft.fillRect(0, 15, snr * 8 , 15, 0xAA00);
@@ -461,41 +410,45 @@ void showRSSI()
 /*
    Goes to the next band (see Band table)
 */
-//void bandUp()
-//{
-//  // save the current frequency for the band
-//  band[bandIdx].currentFreq = currentFrequency;
-//  band[bandIdx].currentStep = currentStep;
-//
-//  if (bandIdx < lastBand)
-//  {
-//    bandIdx++;
-//  }
-//  else
-//  {
-//    bandIdx = 0;
-//  }
-//  useBand();
-//}
-//
-///*
-//   Goes to the previous band (see Band table)
-//*/
-//void bandDown()
-//{
-//  // save the current frequency for the band
-//  band[bandIdx].currentFreq = currentFrequency;
-//  band[bandIdx].currentStep = currentStep;
-//  if (bandIdx > 0)
-//  {
-//    bandIdx--;
-//  }
-//  else
-//  {
-//    bandIdx = lastBand;
-//  }
-//  useBand();
-//}
+void bandUp()
+{
+  // save the current frequency for the band
+  band[bandIdx].currentFreq = currentFrequency;
+  band[bandIdx].currentStep = currentStep;
+
+  if (bandIdx < lastBand)
+  {
+    bandIdx++;
+  }
+  else
+  {
+    bandIdx = 0;
+  }
+  useBand();
+
+
+}
+
+/*
+   Goes to the previous band (see Band table)
+*/
+void bandDown()
+{
+  // save the current frequency for the band
+  band[bandIdx].currentFreq = currentFrequency;
+  band[bandIdx].currentStep = currentStep;
+  if (bandIdx > 0)
+  {
+    bandIdx--;
+  }
+  else
+  {
+    bandIdx = lastBand;
+  }
+  useBand();
+
+
+}
 
 /*
    This function loads the contents of the ssb_patch_content array into the CI (Si4735) and starts the radio on
@@ -529,11 +482,6 @@ void showRSSI()
 //
 //}
 
-/*
-   Switch the radio to current band.
-   The bandIdx variable points to the current band.
-   This function change to the band referenced by bandIdx (see table band).
-*/
 void useBand()
 {
 
@@ -571,20 +519,27 @@ void useBand()
   delay(100);
   currentFrequency = band[bandIdx].currentFreq;
   currentStep = band[bandIdx].currentStep;
+
+  geserSebelum = ((band[bandIdx].maximumFreq - currentFrequency) / 100) * 30;
+  drawDial(band[bandIdx].minimumFreq, band[bandIdx].maximumFreq, 100);
   //  showStatus();
 }
 
 void drawFreq() {
 
-
   if (previousFrequency != currentFrequency) {
-    char freq[8];
-    String convert = " " + String(currentFrequency / currentPembagi, currentDecimal);
-    convert.toCharArray(freq, 8);
+    char freq[20];
+    currentDecimal = 3;
+    if (band[bandIdx].bandType == FM_BAND_TYPE) currentDecimal = 2;
+    if (band[bandIdx].bandType == MW_BAND_TYPE || band[bandIdx].bandType == LW_BAND_TYPE) currentDecimal = 0;
+
+    String convert = " " + String(currentFrequency / band[bandIdx].currentPembagi, currentDecimal) + " " + ((currentMode == FM) ? "MHz" : "KHz") ;
+
+    convert.toCharArray(freq, 20);
 
     tft.setTextSize(3);
     tft.setTextColor(0xFFFF);
-    tft.drawRightString(freq, screenWidth, 4, 1);
+    tft.drawRightString(freq, screenWidth - 2, 4, 1);
     previousFrequency = currentFrequency;
   }
 
@@ -594,6 +549,9 @@ void drawFreq() {
 void drawDial(double startFreq, double endFreq, double pembagi) {
 
   geser = ((endFreq - currentFrequency) / pembagi) * 30.0;
+  currentDecimal = 3;
+  if (band[bandIdx].bandType == FM_BAND_TYPE) currentDecimal = 2;
+  if (band[bandIdx].bandType == MW_BAND_TYPE || band[bandIdx].bandType == LW_BAND_TYPE) currentDecimal = 0;
   Serial.println(geser);
 
   int r = (screenWidth / 2) + 30;
@@ -603,7 +561,7 @@ void drawDial(double startFreq, double endFreq, double pembagi) {
   tempTitik = 0;
 
   char freq[8];
-  String convert = String(currentFrequency / currentPembagi, currentDecimal);
+  String convert = String(currentFrequency /  band[bandIdx].currentPembagi, currentDecimal);
   convert.toCharArray(freq, 8);
 
   for (int isi = ((int) floor(geser / 360) * 12); isi < ((int) floor(geser / 360) * 12) + 12; isi ++) {
@@ -629,14 +587,11 @@ void drawDial(double startFreq, double endFreq, double pembagi) {
   tft.fillRect(0, screenHeight - 30, 100, screenHeight, 0x0000);
   tft.fillRect(screenWidth - 100, screenHeight - 30, screenWidth, screenHeight, 0x0000);
 
-  Serial.print("GESER : "); Serial.println(geser);
-  Serial.print("GESER SEBELUM : "); Serial.println(geserSebelum);
-
   for (int i = 0; i < 360; i += 1)
   {
     int x1 = r * cos(((i) - 90) * PI / 180);
     int y1 = r * sin(((i) - 90) * PI / 180);
-    tft.fillCircle(x + x1, y + y1, 2, 0x0000);
+    tft.fillCircle(x + x1, y + y1, 3, 0x0000);
   }
 
   for (int i = 0; i < 360; i += 1)
@@ -645,13 +600,13 @@ void drawDial(double startFreq, double endFreq, double pembagi) {
     int y1 = r * sin(((i - geser) - 90) * PI / 180);
 
     if (i % 3 == 0) {
-      tft.drawPixel(x + x1, y + y1, TFT_BLUE);
+      tft.drawPixel(x + x1, y + y1, 0x0F00);
     }
 
     if (i % 30 == 0) {
 
 
-      convert = String(frekuensi[(i / 30)] / currentPembagi, currentDecimal);
+      convert = String(frekuensi[(i / 30)] /  band[bandIdx].currentPembagi, currentDecimal);
       convert.toCharArray(freq, 8);
 
 
@@ -659,31 +614,116 @@ void drawDial(double startFreq, double endFreq, double pembagi) {
       int y2 = r * sin(((i - geserSebelum) - 90) * PI / 180);
 
 
-      tft.fillCircle(x + x1, y + y1, 1, TFT_CYAN);
+      tft.fillCircle(x + x1, y + y1, 2, TFT_CYAN);
 
       if (x + x1 < -10) continue;
       if (x + x1 > screenWidth) continue;
       if (y + y1 > screenHeight) continue;
       if (frekuensi[(i / 30)] <= endFreq && frekuensi[(i / 30)] >= startFreq) {
 
-        tft.setTextSize(2);
-
-        tft.setTextColor(0x0000, 0x0000);
-        tft.drawCentreString(freq, x + x2, y + y2 + 15, 1);
-        tft.setTextColor(0xFFFF, 0x0000);
-        tft.drawCentreString(freq, x + x1, y + y1 + 15, 1);
         tft.setTextSize(1);
 
-        tft.drawCentreString(currentSatuan, screenWidth / 2, y - 20, 4);
+        tft.setTextColor(0x0000, 0x0000);
+        tft.drawCentreString(freq, x + x2, y + y2 + 15, 2);
+        tft.setTextColor(0xFFFF, 0x0000);
+        tft.drawCentreString(freq, x + x1, y + y1 + 15, 2);
+        tft.setTextSize(1);
+
+        //        tft.drawCentreString(currentSatuan, screenWidth / 2, y - 20, 4);
         tft.drawLine(x, screenHeight, x, y - r - 10, 0xF000);
       }
     }
   }
 }
 
+void gambarTombol(Tombol button, bool pencet) {
+
+  if (!pencet) {
+    tft.fillRoundRect(button.x, button.y, button.w, button.h, 10, 0x0900);
+    //tft.drawRoundRect(x, y, w, h, 10, 0xFFFF);
+    tft.setTextSize(1);
+    tft.setTextColor(0xFFFF, 0x0900);
+    tft.drawCentreString(button.title, button.x + ( ((button.w + button.x) - button.x) / 2) , button.y + (((button.h + button.y) - button.y) / 2) - 4, 1);
+  } else {
+    tft.fillRoundRect(button.x, button.y, button.w, button.h, 10, 0xFFFF);
+    tft.setTextSize(1);
+    tft.setTextColor(0x0000);
+    tft.drawCentreString(button.title, button.x + ( ((button.w + button.x) - button.x) / 2) , button.y + (((button.h + button.y) - button.y) / 2) - 4, 1);
+  }
+}
+
+bool tombolPressed(int x, int y, Tombol button) {
+  if (x > button.x && y > button.y && x < button.x + button.w && y < button.y + button.h) {
+    return true;
+  } else {
+    return false;
+  }
+}
+
+void getStatus() {
+  si4735.getAutomaticGainControl();
+
+  gambarTombol(btnAGC, si4735.isAgcEnabled());
+}
+
+void daftarTombol() {
+  gambarTombol(btnAGC, !disableAgc);
+  gambarTombol(btnPrevBand,  false);
+  gambarTombol(btnNextBand, false);
+  if (currentMode != FM) {
+    gambarTombol(btnMode, false);
+  }
+}
 
 void loop()
 {
+
+  uint16_t x = 0, y = 0;
+  boolean pressed = tft.getTouch(&x, &y);
+
+  // Draw a white spot at the detected coordinates
+  if (pressed) {
+    lastPencet = true;
+    //tft.fillCircle(x, y, 2, TFT_WHITE);
+    Serial.print(x); Serial.print(' '); Serial.print(y); Serial.println();
+    // cek AGC
+    if (tombolPressed(x, y, btnAGC)) {
+      gambarTombol(btnAGC, !disableAgc);
+      disableAgc = !disableAgc;
+      si4735.setAutomaticGainControl(disableAgc, 1);
+      getStatus();
+
+      delay(MIN_ELAPSED_TIME);
+    }
+
+    if (tombolPressed(x, y, btnNextBand)) {
+      gambarTombol(btnNextBand, true);
+      tft.fillRect(0, screenHeight / 2, screenWidth, screenHeight, 0x0000);
+      bandUp();
+
+      delay(MIN_ELAPSED_TIME);
+    }
+
+    if (tombolPressed(x, y, btnPrevBand)) {
+      gambarTombol(btnPrevBand, true);
+      tft.fillRect(0, screenHeight / 2, screenWidth, screenHeight, 0x0000);
+      bandDown();
+
+
+      delay(MIN_ELAPSED_TIME);
+    }
+
+    if (tombolPressed(x, y, btnMode) && (currentMode != FM)) {
+      gambarTombol(btnMode, true);
+
+      delay(MIN_ELAPSED_TIME);
+    }
+  } else {
+    if (lastPencet) {
+      daftarTombol();
+      lastPencet = false;
+    }
+  }
 
   if (millis() - waktuTerakhir > 700) fast = false;
 
@@ -698,15 +738,11 @@ void loop()
     tft.drawRightString("SLOW", screenWidth - 3 , 33, 1);
   }
 
-  buttonstate = digitalRead(ENCODER_SWITCH);
-  if (buttonstate == LOW) {
-    idxBand++;
-    if (idxBand > 4) idxBand = 1; // back to FM
-    gantiBand(idxBand);
-    tft.fillRect(0, 0, screenWidth, screenHeight, 0x0000);
-    drawDial(currentBottomFreq, currentTopFreq, 100);
-    while (digitalRead(ENCODER_SWITCH) == 0);
-  }
+
+  tft.setTextSize(1);
+  tft.setTextColor(0xFFFF, 0x0000);
+  tft.drawRightString(band[bandIdx].bandName, screenWidth - 40, 33, 1);
+
 
 
   if (encoderCount != 0)
@@ -731,15 +767,15 @@ void loop()
       }
 
       if (encoderCount == -1) {
-        if (currentFrequency + step <= currentTopFreq) currentFrequency += step; else currentFrequency = currentTopFreq;
+        if (currentFrequency + step <=  band[bandIdx].maximumFreq) currentFrequency += step; else currentFrequency = band[bandIdx].maximumFreq;
       } else {
-        if (currentFrequency - step >= currentBottomFreq)  currentFrequency -= step; else currentFrequency = currentBottomFreq;
+        if (currentFrequency - step >=  band[bandIdx].minimumFreq)  currentFrequency -= step; else currentFrequency = band[bandIdx].minimumFreq;
       }
 
       si4735.setFrequency(currentFrequency);
       geserSebelum = geser;
 
-      drawDial(currentBottomFreq, currentTopFreq, 100);
+      drawDial(band[bandIdx].minimumFreq, band[bandIdx].maximumFreq, 100);
       showRSSI();
 
     }
@@ -765,6 +801,7 @@ void loop()
   }
 
   drawFreq();
+
 
   delay(10);
 }
